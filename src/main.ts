@@ -2,9 +2,8 @@ import { NestFactory } from '@nestjs/core';
 import 'dotenv/config';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/filters/api-exception.filter';
-import { ResponseEnvelopeInterceptor } from './common/interceptors/response-envelope.interceptor';
-import { RedisIoAdapter } from './modules/chat/redis-io.adapter';
-import { RedisService } from './database/redis/redis.service';
+import { RedisAdapter } from './core/websockets/redis.adapter';
+import { RedisService } from './core/redis/redis.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -18,8 +17,7 @@ async function bootstrap() {
     credentials: true,
   });
   app.useGlobalFilters(new ApiExceptionFilter());
-  app.useGlobalInterceptors(new ResponseEnvelopeInterceptor());
-  app.useWebSocketAdapter(new RedisIoAdapter(app, redis));
+  app.useWebSocketAdapter(new RedisAdapter(app, redis));
 
   await app.listen(process.env.PORT ?? 3000);
 }

@@ -15,6 +15,7 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { SessionAuthGuard } from '../../common/guards/session-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { SessionUser } from '../auth/auth.types';
+import { successResponse } from '../../common/helpers/response.helper';
 
 @Controller('rooms')
 @UseGuards(SessionAuthGuard)
@@ -22,44 +23,50 @@ export class RoomsController {
   constructor(private readonly roomsService: RoomsService) {}
 
   @Get()
-  findAll() {
-    return this.roomsService.findAll();
+  async findAll() {
+    const data = await this.roomsService.findAll();
+    return successResponse(data);
   }
 
   @Post()
-  create(
+  async create(
     @Body() createRoomDto: CreateRoomDto,
     @CurrentUser() user: SessionUser,
   ) {
-    return this.roomsService.create(createRoomDto, user);
+    const data = await this.roomsService.create(createRoomDto, user);
+    return successResponse(data);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.roomsService.findOne(id);
+  async findOne(@Param('id') id: string) {
+    const data = await this.roomsService.findOne(id);
+    return successResponse(data);
   }
 
   @Delete(':id')
   @HttpCode(200)
-  remove(@Param('id') id: string, @CurrentUser() user: SessionUser) {
-    return this.roomsService.remove(id, user);
+  async remove(@Param('id') id: string, @CurrentUser() user: SessionUser) {
+    const data = await this.roomsService.remove(id, user);
+    return successResponse(data);
   }
 
   @Get(':id/messages')
-  listMessages(
+  async listMessages(
     @Param('id') id: string,
     @Query('limit') limit?: string,
     @Query('before') before?: string,
   ) {
-    return this.roomsService.listMessages(id, limit, before);
+    const data = await this.roomsService.listMessages(id, limit, before);
+    return successResponse(data);
   }
 
   @Post(':id/messages')
-  createMessage(
+  async createMessage(
     @Param('id') id: string,
     @Body() dto: CreateMessageDto,
     @CurrentUser() user: SessionUser,
   ) {
-    return this.roomsService.createMessage(id, dto, user);
+    const data = await this.roomsService.createMessage(id, dto, user);
+    return successResponse(data);
   }
 }

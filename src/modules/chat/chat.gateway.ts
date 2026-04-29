@@ -8,7 +8,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { AuthService } from '../auth/auth.service';
-import { RedisService } from '../../database/redis/redis.service';
+import { RedisService } from '../../core/redis/redis.service';
 import { RoomsService } from '../rooms/rooms.service';
 
 type SocketState = {

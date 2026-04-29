@@ -3,9 +3,9 @@ import { and, desc, eq, lt } from 'drizzle-orm';
 import { randomBytes } from 'crypto';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
-import { DatabaseService } from '../../database/database.service';
+import { DatabaseService } from '../../core/database/database.service';
 import { messages, rooms, users } from '../../../drizzle/schema';
-import { RedisService } from '../../database/redis/redis.service';
+import { RedisService } from '../../core/redis/redis.service';
 import { SessionUser } from '../auth/auth.types';
 import { ApiException } from '../../common/errors/api.exception';
 
