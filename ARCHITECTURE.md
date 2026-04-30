@@ -1,88 +1,125 @@
 # Architecture
 
-## Overview
+## Architecture Overview
 
-The app is a single NestJS service with REST controllers for login, rooms, and messages, plus a Socket.io gateway for live room presence and events.
+I kept the system simple and explicit so it is easy to test against the contract and easy to reason about during review.
 
 ```text
-Frontend / tests
-   | REST /api/v1
+Client / test runner
+   |
+   | REST (/api/v1)
    v
 NestJS controllers -> services -> Drizzle ORM -> PostgreSQL
    |
-   | publish chat events
+   | publish domain events
    v
-Redis pub/sub
+Redis pub/sub (chat:events)
    |
    v
-Socket.io gateway instances -> connected clients in /chat rooms
-
-Redis also stores sessions, active users, and socket connection state.
+Socket.io gateways (/chat namespace) -> connected room clients
 ```
 
-Modules live under `src/modules`:
+Redis is used as shared runtime state, not just as a cache. It stores:
 
-- `auth`: username login and Redis-backed sessions
-- `rooms`: room CRUD and message history/posting
-- `database`: Drizzle PostgreSQL client and schema
-- `redis`: shared Redis clients
-- `chat`: Socket.io gateway and Redis adapter
+- sessions
+- active users per room
+- socket-to-user/room mapping
+- pub/sub events for cross-instance fan-out
+
+The key modules are:
+
+- `auth` for login and session lifecycle
+- `rooms` for room CRUD + message APIs
+- `chat` for Socket.io connection/presence/events
+- `core/database` for Drizzle/PostgreSQL access
+- `core/redis` for Redis clients and adapter connections
 
 ## Session Strategy
 
-`POST /api/v1/login` validates the username, creates the user if needed, and returns a fresh opaque token generated with `crypto.randomBytes`.
+`POST /api/v1/login` validates the username, finds or creates the user, and issues a new opaque session token (`crypto.randomBytes`).
 
-Sessions are stored in Redis:
-
-```text
-session:<token> -> JSON user payload
-TTL: 24 hours
-```
-
-The REST auth guard reads `Authorization: Bearer <token>` and resolves the user from Redis. Socket connections pass the same token as the `token` query parameter and are disconnected immediately when the token is missing or expired.
-
-## Redis Pub/Sub Fan-out
-
-Messages are never emitted directly from the REST controller. `POST /rooms/:id/messages` first saves the message through Drizzle, then publishes a `message:new` payload to the `chat:events` Redis channel.
-
-Every running NestJS instance has a gateway subscriber on that channel. When an instance receives the event, it emits to its local Socket.io clients in the target room. The Socket.io Redis adapter is also enabled, so room membership and Socket.io broadcasts work across multiple server instances.
-
-Room deletion follows the same pattern: the service publishes `room:deleted` before deleting the database row.
-
-## Presence and Socket State
-
-Redis is the source of truth for live room state:
+Session data is stored in Redis for 24 hours:
 
 ```text
-room:<roomId>:active_users              Set of usernames
-room:<roomId>:user:<username>:sockets   Set of socket IDs for that user in that room
-socket:<socketId>                       Hash with roomId and username
+session:<token> -> {"id","username","createdAt"}
+TTL: 86400 seconds
 ```
 
-This avoids in-memory connection maps. If the same username opens two tabs in the same room, the username remains active until the last socket leaves.
+I intentionally keep Redis as the source of truth for token validity. If the key expires or is removed, the token is invalid immediately.
 
-## Single-instance Capacity Estimate
+REST auth flow:
 
-A modest single Node.js instance should handle roughly 5,000 to 10,000 idle WebSocket connections if the host has enough file descriptors and memory. Real chat throughput is lower because each posted message requires a PostgreSQL insert, a Redis publish, and Socket.io fan-out to all room members.
+- read `Authorization: Bearer <token>`
+- look up `session:<token>` in Redis
+- attach user to request context
 
-For a practical interview deployment on a small 1 vCPU / 1 GB instance, I would expect a safer operating range of about 1,000 to 2,000 concurrent connected users with moderate message volume. The exact number depends heavily on room size distribution, message rate, database latency, and Redis location.
+Socket auth flow:
 
-## Scaling to 10x
+- read `token` and `roomId` from handshake query
+- reject connection if token is invalid (`401`) or room does not exist (`404`)
+- continue only after both checks pass
 
-To scale this design to 10x load, I would:
+## Redis Pub/Sub And Multi-instance WebSocket Fan-out
 
-- Run multiple stateless NestJS instances behind a load balancer.
-- Keep Redis managed and close to the app instances because session and presence checks are on the hot path.
-- Use a managed PostgreSQL instance with proper connection limits and pooling.
-- Add a queue for heavy side effects if message posting grows beyond simple persistence and fan-out.
-- Add rate limits for login and message posting.
-- Partition very large rooms or introduce per-room backpressure if a single room receives high write volume.
-- Add observability: message publish latency, WebSocket connection count, Redis command latency, and PostgreSQL query timing.
+The message send path is:
 
-## Known Limitations
+1. `POST /rooms/:id/messages` validates and persists the message in PostgreSQL via Drizzle.
+2. Service publishes `message:new` to Redis channel `chat:events`.
+3. Every running gateway subscribes to `chat:events`.
+4. Each instance emits to its own local sockets in that room.
 
-- There is no password or identity proof by design; a username is the only identity.
-- Socket.io connection failures emit an `error` payload and disconnect, but Socket.io does not expose REST-style HTTP error responses after the transport is established.
-- The message cursor uses the cursor message `createdAt`. If many messages are created in the exact same database timestamp, a stricter `(createdAt, id)` cursor would be more precise.
-- Presence keys have a 24-hour expiry as a cleanup backstop, but a production system should add periodic reconciliation for crashed instances.
-- The checked-in SQL migration is simple and human-readable; `drizzle-kit push` is the recommended local setup path for this task.
+This gives consistent fan-out even when clients are connected to different app instances.
+
+Room deletion uses the same pattern:
+
+- publish `room:deleted`
+- then delete room row (messages cascade by foreign key)
+
+## Presence And Socket State
+
+No in-memory JavaScript maps are used for connection tracking. Redis keys are used instead:
+
+```text
+room:<roomId>:active_users               Set<username>
+room:<roomId>:user:<username>:sockets    Set<socketId>
+socket:<socketId>                        Hash(roomId, username)
+```
+
+Behavior:
+
+- on connect, user is added to room state
+- on disconnect/`room:leave`, socket is removed
+- username is removed only when its last socket leaves
+
+This also handles multi-tab usage correctly.
+
+## Estimated Single-instance Capacity
+
+For a typical interview-grade deployment (1 vCPU / 1 GB), I estimate about **1,000-2,000 concurrent connected users** at moderate message volume.
+
+Reasoning:
+
+- each message path includes one PostgreSQL write and one Redis publish
+- fan-out cost depends on room size distribution
+- practical limits are usually DB latency, Redis round-trip time, and per-room burst traffic
+
+Idle connection capacity can be higher, but steady chat throughput becomes the real bottleneck.
+
+## Scaling Plan For 10x Load
+
+If load grows by 10x, I would prioritize:
+
+- horizontal scaling with multiple stateless NestJS instances
+- managed Redis close to app nodes (session/presence path is hot)
+- managed PostgreSQL + connection pooling tuning
+- rate limiting for login and message endpoints
+- better cursoring (`createdAt,id`) for very high write concurrency
+- room-level backpressure controls for hot rooms
+- stronger observability (Redis latency, DB latency, publish-to-emit lag, socket counts)
+
+## Known Limitations And Trade-offs
+
+- Identity is intentionally weak (username only) per assignment.
+- WebSocket handshake failures are surfaced as Socket.io connect errors, not REST-shaped JSON responses.
+- Cursor pagination currently uses message timestamp cutoff; tie-heavy workloads would benefit from a compound cursor.
+- Presence keys use TTL as cleanup fallback; production setups should add periodic reconciliation jobs.

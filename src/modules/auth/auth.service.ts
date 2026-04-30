@@ -1,5 +1,4 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import { eq } from 'drizzle-orm';
 import { CreateAuthDto } from './dto/create-auth.dto';
 import { DatabaseService } from '../../core/database/database.service';
@@ -17,7 +16,6 @@ export class AuthService {
   constructor(
     private readonly database: DatabaseService,
     private readonly redis: RedisService,
-    private readonly jwt: JwtService,
   ) {}
 
   async login(createAuthDto: CreateAuthDto) {
@@ -41,7 +39,7 @@ export class AuthService {
       createdAt: user.createdAt.toISOString(),
     };
 
-    const sessionToken = this.issueToken(sessionUser);
+    const sessionToken = this.makeOpaqueSessionToken();
 
     // Store in Redis with TTL so token can be invalidated server-side
     await this.redis.client.set(
@@ -61,21 +59,17 @@ export class AuthService {
       return null;
     }
 
-    // 1. Verify JWT signature and expiry
-    let payload: SessionUser;
-    try {
-      payload = await this.jwt.verifyAsync<SessionUser>(token);
-    } catch {
-      return null;
-    }
-
-    // 2. Check Redis presence (allows server-side revocation)
+    // Resolve session state from Redis (single source of truth)
     const value = await this.redis.client.get(this.sessionKey(token));
     if (!value) {
       return null;
     }
 
-    return payload;
+    try {
+      return JSON.parse(value) as SessionUser;
+    } catch {
+      return null;
+    }
   }
 
   private async findUserByUsername(username: string) {
@@ -109,15 +103,12 @@ export class AuthService {
     return trimmed;
   }
 
-  private issueToken(user: SessionUser): string {
-    return this.jwt.sign(
-      { id: user.id, username: user.username, createdAt: user.createdAt },
-      { expiresIn: this.sessionTtlSeconds },
-    );
-  }
-
   private sessionKey(token: string) {
     return `session:${token}`;
+  }
+
+  private makeOpaqueSessionToken() {
+    return randomBytes(32).toString('hex');
   }
 
   private makeId(prefix: string) {

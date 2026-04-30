@@ -1,8 +1,16 @@
 # Anonymous Chat API
 
-NestJS backend for an anonymous real-time group chat service. Users log in with a username only, create or join rooms, read persisted message history, and receive live messages through Socket.io.
+This is a NestJS backend for an anonymous real-time group chat service. Users log in with a username only, join a room, and exchange messages instantly.
 
-## Stack
+The implementation follows the interview contract:
+
+- REST API under `/api/v1`
+- PostgreSQL persistence through Drizzle ORM
+- Redis-backed session and room presence state
+- Redis pub/sub fan-out for multi-instance WebSocket delivery
+- Socket.io namespace at `/chat`
+
+## Tech Stack
 
 - NestJS 11
 - PostgreSQL
@@ -11,25 +19,23 @@ NestJS backend for an anonymous real-time group chat service. Users log in with 
 - Socket.io
 - TypeScript
 
-## Requirements
+## Prerequisites
 
-Install these locally before running the app:
+Install these locally:
 
 - Node.js 22+
 - pnpm
 - PostgreSQL
 - Redis
 
-Docker is not required.
-
-## Setup
+## Local Setup
 
 ```bash
 pnpm install
 cp .env.example .env
 ```
 
-Edit `.env` if your PostgreSQL or Redis credentials are different:
+Default `.env` values:
 
 ```env
 PORT=3000
@@ -38,58 +44,59 @@ REDIS_URL=redis://localhost:6379
 CORS_ORIGIN=*
 ```
 
-Create the PostgreSQL database manually:
+Create the database:
 
 ```bash
 createdb anonymous_chat
 ```
 
-Push the Drizzle schema:
+Apply schema:
 
 ```bash
 pnpm run db:push
 ```
 
-You can also apply the checked-in SQL manually from `drizzle/migrations/0000_initial_schema.sql` if your deployment flow uses `psql`.
+If your deployment flow prefers SQL, use `drizzle/migrations/0000_initial_schema.sql`.
 
-## Run
+## Run The App
+
+Development:
 
 ```bash
 pnpm run start:dev
 ```
 
-Production build:
+Production:
 
 ```bash
 pnpm run build
 pnpm run start:prod
 ```
 
-The REST API is served under:
+Base REST URL:
 
 ```text
 http://localhost:3000/api/v1
 ```
 
-The Socket.io namespace is:
+Socket.io URL:
 
 ```text
 ws://localhost:3000/chat?token=<sessionToken>&roomId=<roomId>
 ```
 
-## Useful Scripts
+## Useful Commands
 
 ```bash
 pnpm run build
-pnpm run test
 pnpm run lint
 pnpm run db:push
 pnpm run db:generate
 ```
 
-## API Notes
+## API Contract Notes
 
-All REST responses use this envelope:
+Every success response:
 
 ```json
 {
@@ -98,7 +105,7 @@ All REST responses use this envelope:
 }
 ```
 
-Errors use:
+Every error response:
 
 ```json
 {
@@ -118,6 +125,6 @@ Authorization: Bearer <sessionToken>
 
 ## Deployment
 
-Set `DATABASE_URL`, `REDIS_URL`, `PORT`, and `CORS_ORIGIN` on the host. Run `pnpm run build`, apply the database schema with `pnpm run db:push` or the SQL migration, then start with `pnpm run start:prod`.
+Set `DATABASE_URL`, `REDIS_URL`, `PORT`, and `CORS_ORIGIN` on your host, build with `pnpm run build`, migrate with `pnpm run db:push`, then start with `pnpm run start:prod`.
 
-Deployed URL: add the final hosted URL after manual deployment.
+Deployed URL: replace this line with your public deployment URL before submission.

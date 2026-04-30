@@ -36,39 +36,57 @@ export class ChatGateway
   ) {}
 
   async afterInit() {
+    this.server.use(async (socket, next) => {
+      const token = this.readQuery(socket, 'token');
+      const roomId = this.readQuery(socket, 'roomId');
+
+      if (!token) {
+        const error = new Error('Unauthorized') as Error & {
+          data?: { code: number; message: string };
+        };
+        error.data = {
+          code: 401,
+          message: 'Missing or expired session token',
+        };
+        return next(error);
+      }
+
+      const user = await this.authService.getSessionUser(token);
+      if (!user) {
+        const error = new Error('Unauthorized') as Error & {
+          data?: { code: number; message: string };
+        };
+        error.data = {
+          code: 401,
+          message: 'Missing or expired session token',
+        };
+        return next(error);
+      }
+
+      if (!roomId || !(await this.roomsService.roomExists(roomId))) {
+        const error = new Error('Not Found') as Error & {
+          data?: { code: number; message: string };
+        };
+        error.data = {
+          code: 404,
+          message: `Room with id ${roomId} does not exist`,
+        };
+        return next(error);
+      }
+
+      socket.data.user = user;
+      socket.data.roomId = roomId;
+      next();
+    });
+
     await this.redis.subscriber.subscribe('chat:events', (message) => {
       this.handleChatEvent(message);
     });
   }
 
   async handleConnection(socket: Socket) {
-    const token = this.readQuery(socket, 'token');
-    const roomId = this.readQuery(socket, 'roomId');
-
-    if (!token) {
-      return this.disconnectWithError(
-        socket,
-        401,
-        'Missing or expired session token',
-      );
-    }
-
-    const user = await this.authService.getSessionUser(token);
-    if (!user) {
-      return this.disconnectWithError(
-        socket,
-        401,
-        'Missing or expired session token',
-      );
-    }
-
-    if (!roomId || !(await this.roomsService.roomExists(roomId))) {
-      return this.disconnectWithError(
-        socket,
-        404,
-        `Room with id ${roomId} does not exist`,
-      );
-    }
+    const user = socket.data.user as { username: string };
+    const roomId = socket.data.roomId as string;
 
     await socket.join(roomId);
     await this.trackJoin(socket.id, roomId, user.username);
@@ -168,11 +186,6 @@ export class ChatGateway
   private async getActiveUsers(roomId: string) {
     const users = await this.redis.client.sMembers(this.activeUsersKey(roomId));
     return users.sort((a, b) => a.localeCompare(b));
-  }
-
-  private disconnectWithError(socket: Socket, code: number, message: string) {
-    socket.emit('error', { code, message });
-    socket.disconnect(true);
   }
 
   private readQuery(socket: Socket, key: string) {
